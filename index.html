@@ -60,22 +60,23 @@ const rp=n=>'Rp '+Math.round(n||0).toLocaleString('id-ID'),p2=n=>String(n).padSt
 const fd=d=>{d=new Date(d);return p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+d.getFullYear()};
 const CATS=['Jastip','Frozen Food','Snack','Lainnya'];
 const STORES=['products','customers','transactions','payments','movements','settings'];
-let db,P=[],C=[],T=[],Pay=[],ST={id:'main',name:'NYEMILJAJAN',address:'',wa:'',footer:'Terima kasih sudah belanja!',ship:0,howto:'Scan QRIS lalu kirim bukti bayar.',qris:'',lastBackup:0};
+let db,P=[],C=[],T=[],Pay=[],M=[],ST={id:'main',name:'NYEMILJAJAN',address:'',wa:'',footer:'Terima kasih sudah belanja!',ship:0,howto:'Scan QRIS lalu kirim bukti bayar.',qris:'',lastBackup:0};
 let tab='kasir',cat='Semua',q='',cart=[];
 const NAV=[['kasir','🛒','Kasir'],['produk','📦','Produk'],['pelanggan','👥','Pelanggan'],['invoice','🧾','Invoice'],['set','⚙️','Atur']];
 
 function openDB(){return new Promise((ok,no)=>{const r=indexedDB.open('nyemiljajan',1);r.onupgradeneeded=()=>STORES.forEach(s=>r.result.createObjectStore(s,{keyPath:'id'}));r.onsuccess=()=>{db=r.result;ok()};r.onerror=()=>no(r.error)})}
 const getAll=s=>new Promise((ok,no)=>{const r=db.transaction(s).objectStore(s).getAll();r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
-function putMany(list){return new Promise((ok,no)=>{const names=[...new Set(list.map(x=>x[0]))],t=db.transaction(names,'readwrite');list.forEach(([s,o])=>t.objectStore(s).put(o));t.oncomplete=ok;t.onerror=()=>no(t.error);t.onabort=()=>no(t.error)})}
+function putMany(list,dels=[]){return new Promise((ok,no)=>{const names=[...new Set([...list,...dels].map(x=>x[0]))],t=db.transaction(names,'readwrite');list.forEach(([s,o])=>t.objectStore(s).put(o));dels.forEach(([s,id])=>t.objectStore(s).delete(id));t.oncomplete=ok;t.onerror=()=>no(t.error);t.onabort=()=>no(t.error)})}
 const rec=o=>({id:crypto.randomUUID(),store_id:'main',created_at:Date.now(),updated_at:Date.now(),...o});
+const mv=(pid,qty,note)=>{const m=rec({product_id:pid,qty,note,date:new Date().toISOString()});M.push(m);return ['movements',m]};
 const paid=t=>Pay.filter(p=>p.tx_id===t.id).reduce((a,p)=>a+p.amount,0);
 const status=t=>{const s=t.total-paid(t);return s<=0?'Lunas':paid(t)>0?'Sebagian':'Belum bayar'};
 function toast(m){const e=document.createElement('div');e.className='toast';e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),2200)}
-async function save(list){try{await putMany(list)}catch(e){toast('Gagal menyimpan, coba lagi');throw e}}
+async function save(list,dels){try{await putMany(list,dels||[])}catch(e){toast('Gagal menyimpan, coba lagi');throw e}}
 
 async function init(){
   await openDB();
-  [P,C,T,Pay]=await Promise.all(['products','customers','transactions','payments'].map(getAll));
+  [P,C,T,Pay,M]=await Promise.all(['products','customers','transactions','payments','movements'].map(getAll));
   const s=await getAll('settings');if(s[0])Object.assign(ST,s[0]);
   if(!P.length){P=[['Cireng Isi Ayam Pedas','Frozen Food',7000,12000,50,'pcs',1],['Bakso Malang Frozen','Frozen Food',17000,25000,30,'pack',1],['Jastip Skincare (contoh)','Jastip',70000,85000,0,'pcs',0]].map(([name,category,cost,price,stock,unit,track])=>rec({sku:'',name,category,cost,price,stock,unit,track,active:true}));await save(P.map(x=>['products',x]))}
   try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
@@ -126,7 +127,7 @@ async function checkout(){
   const t=rec({no:pre+String(n).padStart(3,'0'),date:now.toISOString(),customer_id:cid||null,items:cart.map(c=>({...c})),subtotal:f.sub,discount:f.d,shipping:f.s,total:f.t});list.push(['transactions',t]);
   const s=$('#stt').value,amt=s==='paid'?f.t:s==='part'?Math.min(+$('#pa').value||0,f.t):0;let pay=null;
   if(amt>0){pay=rec({tx_id:t.id,date:now.toISOString(),amount:amt,method:$('#mt').value});list.push(['payments',pay])}
-  cart.forEach(c=>{const p=c.pid&&P.find(x=>x.id===c.pid);if(p&&p.track){p.stock-=c.qty;p.updated_at=Date.now();list.push(['products',p]);list.push(['movements',rec({product_id:p.id,qty:-c.qty,note:t.no,date:now.toISOString()})])}});
+  cart.forEach(c=>{const p=c.pid&&P.find(x=>x.id===c.pid);if(p&&p.track){p.stock=(+p.stock||0)-c.qty;p.updated_at=Date.now();list.push(['products',p]);list.push(mv(p.id,-c.qty,t.no))}});
   await save(list);T.unshift(t);if(pay)Pay.push(pay);cart=[];closeS();render();invSheet(t.id);toast('Transaksi tersimpan')
 }
 
@@ -142,15 +143,16 @@ function invSheet(id){
   <tr><td><b>TOTAL</b></td><td><b>${rp(t.total)}</b></td></tr><tr><td>Dibayar</td><td>${rp(pd)}</td></tr><tr><td><b>Sisa</b></td><td><b>${rp(sisa)}</b></td></tr></table>
   <p><span class="pill ${s==='Lunas'?'':s==='Sebagian'?'o':'r'}">${s}</span></p>
   ${sisa>0&&ST.qris?`<img src="${ST.qris}" alt="QRIS"><div class="mut" style="text-align:center">${esc(ST.howto)}</div>`:''}<p class="mut" style="text-align:center">${esc(ST.footer)}</p></div>
-  <div class="row np" style="margin-top:10px;flex-wrap:wrap"><button class="f1" onclick="window.open('https://wa.me/${waNum(c&&c.wa)}?text='+encodeURIComponent(invText(T.find(x=>x.id==='${id}'))))">WhatsApp</button><button class="f1" onclick="shareInv('${id}')">Bagikan</button><button class="f1" onclick="window.print()">PDF/Cetak</button><button class="f1" onclick="closeS()">Tutup</button></div>`)
+  <div class="np"><div class="row" style="margin-top:10px"><button class="pri f1" onclick="sendF('${id}','png')">📷 Kirim gambar</button><button class="pri f1" onclick="sendF('${id}','pdf')">📄 Kirim PDF</button></div>
+  <div class="row" style="margin-top:8px"><button class="f1" onclick="waText('${id}')">WA teks</button>${sisa>0?`<button class="f1" onclick="payMore('${id}')">Catat bayar</button>`:''}<button class="f1" onclick="dupInv('${id}')">Duplikat</button></div>
+  <div class="row" style="margin-top:8px"><button class="dng f1" onclick="delInv('${id}')">Hapus</button><button class="f1" onclick="closeS()">Tutup</button></div></div>`);prep(t)
 }
-async function shareInv(id){const t=T.find(x=>x.id===id);try{if(navigator.share)await navigator.share({title:t.no,text:invText(t)});else{await navigator.clipboard.writeText(invText(t));toast('Tersalin')}}catch(e){}}
 function vInv(){$('#c').innerHTML=`<h2>Invoice</h2>`+(T.length?T.map(t=>{const c=C.find(x=>x.id===t.customer_id),s=status(t);return `<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${esc(c?c.name:'Umum')} · ${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div><span class="pill ${s==='Lunas'?'':s==='Sebagian'?'o':'r'}">${s}</span></div></div></div>`}).join(''):'<p class="mut">Belum ada transaksi.</p>')}
 
 /* PRODUK */
 function vProduk(){
   $('#c').innerHTML=`<div class="row sp"><h2>Produk</h2><button class="pri" onclick="pForm()">+ Tambah</button></div><input id="q" placeholder="🔍 Cari" value="${esc(q)}"><div id="pl"></div>`;
-  const d=()=>{$('#pl').innerHTML=P.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())).map(p=>`<div class="card row sp" onclick="pForm('${p.id}')"><div><b>${esc(p.name)}</b> ${p.active?'':'<span class="pill r">nonaktif</span>'}<div class="mut">${esc(p.category)} · HPP ${rp(p.cost)}${p.track?' · stok '+p.stock+' '+esc(p.unit):''}</div></div><b>${rp(p.price)}</b></div>`).join('')};
+  const d=()=>{$('#pl').innerHTML=P.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())).map(p=>`<div class="card row sp" onclick="pForm('${p.id}')"><div><b>${esc(p.name)}</b> ${p.active?'':'<span class="pill r">nonaktif</span>'}<div class="mut">${esc(p.category)} · HPP ${rp(p.cost)}${p.track?' · stok '+p.stock+' '+esc(p.unit):''}</div></div><div style="text-align:right"><b>${rp(p.price)}</b><div class="mut">✏️ Ubah</div></div></div>`).join('')};
   $('#q').oninput=e=>{q=e.target.value;d()};d()
 }
 function pForm(id){
@@ -159,14 +161,14 @@ function pForm(id){
   <div class="row"><input id="c1" type="number" inputmode="numeric" placeholder="HPP Rp" value="${p.cost}"><input id="d" type="number" inputmode="numeric" placeholder="Harga jual Rp" value="${p.price}"></div>
   <div class="row"><input id="e" type="number" inputmode="decimal" placeholder="Stok" value="${p.stock}"><input id="u" placeholder="Satuan" value="${esc(p.unit)}"></div>
   <label class="row"><input type="checkbox" id="tr" style="width:auto;margin:0" ${p.track?'checked':''}> Lacak stok</label><label class="row" style="margin:8px 0"><input type="checkbox" id="ac" style="width:auto;margin:0" ${p.active?'checked':''}> Aktif (tampil di kasir)</label>
-  <div class="row"><button onclick="closeS()">Batal</button><button class="pri f1" onclick="pSave('${id||''}')">Simpan</button></div>`)
+  ${id?stokHist(id):''}<div class="row"><button onclick="closeS()">Batal</button>${id?`<button class="dng" onclick="delP('${id}')">Hapus</button>`:''}<button class="pri f1" onclick="pSave('${id||''}')">Simpan</button></div>`)
 }
 async function pSave(id){
   const n=$('#a').value.trim(),pr=parseFloat($('#d').value),hp=parseFloat($('#c1').value)||0,sk=parseFloat($('#e').value)||0;
   if(!n||!(pr>=0))return toast('Isi nama dan harga');
   let p=P.find(x=>x.id===id);const list=[],isNew=!p;if(isNew){p=rec({sku:'',stock:0});P.push(p)}
   const diff=sk-(isNew?0:p.stock);Object.assign(p,{name:n,category:$('#b').value,cost:hp,price:pr,stock:sk,unit:$('#u').value.trim()||'pcs',track:$('#tr').checked,active:$('#ac').checked,updated_at:Date.now()});
-  list.push(['products',p]);if(diff&&p.track)list.push(['movements',rec({product_id:p.id,qty:diff,note:isNew?'Stok awal':'Penyesuaian',date:new Date().toISOString()})]);
+  list.push(['products',p]);if(diff&&p.track)list.push(mv(p.id,diff,isNew?'Stok awal':'Penyesuaian manual'));
   await save(list);closeS();render();toast('Tersimpan')
 }
 
@@ -176,13 +178,13 @@ function vPel(){
 }
 function cForm(id){const c=C.find(x=>x.id===id)||{name:'',wa:'',address:''};sheet(`<h2>${id?'Ubah':'Tambah'} pelanggan</h2><input id="a" placeholder="Nama" value="${esc(c.name)}"><input id="b" inputmode="tel" placeholder="WhatsApp" value="${esc(c.wa)}"><input id="d" placeholder="Alamat / catatan" value="${esc(c.address)}"><div class="row"><button onclick="closeS()">Batal</button><button class="pri f1" onclick="cSave('${id||''}')">Simpan</button></div>`)}
 async function cSave(id){const n=$('#a').value.trim();if(!n)return toast('Isi nama');let c=C.find(x=>x.id===id);if(!c){c=rec({});C.push(c)}Object.assign(c,{name:n,wa:$('#b').value.trim(),address:$('#d').value.trim(),updated_at:Date.now()});await save([['customers',c]]);closeS();render()}
-function cDetail(id){const c=C.find(x=>x.id===id),ts=T.filter(t=>t.customer_id===id);sheet(`<h2>${esc(c.name)}</h2><div class="mut">${esc(c.wa||'')} ${esc(c.address||'')}</div><button style="margin:8px 0" onclick="cForm('${id}')">Ubah data</button>`+(ts.length?ts.map(t=>`<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div class="mut">${status(t)}</div></div></div>`).join(''):'<p class="mut">Belum ada pembelian.</p>')+`<button onclick="closeS()">Tutup</button>`)}
+function cDetail(id){const c=C.find(x=>x.id===id),ts=T.filter(t=>t.customer_id===id);sheet(`<h2>${esc(c.name)}</h2><div class="mut">${esc(c.wa||'')} ${esc(c.address||'')}</div><div class="row" style="margin:8px 0"><button class="f1" onclick="cForm('${id}')">✏️ Ubah data</button><button class="dng" onclick="delC('${id}')">Hapus</button></div>`+(ts.length?ts.map(t=>`<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div class="mut">${status(t)}</div></div></div>`).join(''):'<p class="mut">Belum ada pembelian.</p>')+`<button onclick="closeS()">Tutup</button>`)}
 
 /* ATUR */
 function vSet(){
   $('#c').innerHTML=`<h2>Pengaturan</h2><div class="card"><b>Info toko</b><input id="s1" placeholder="Nama toko" value="${esc(ST.name)}"><input id="s2" placeholder="Alamat" value="${esc(ST.address)}"><input id="s3" placeholder="WhatsApp toko" value="${esc(ST.wa)}"><input id="s4" type="number" inputmode="numeric" placeholder="Ongkir default" value="${ST.ship||''}"><input id="s5" placeholder="Instruksi bayar" value="${esc(ST.howto)}"><input id="s6" placeholder="Footer invoice" value="${esc(ST.footer)}">
   <div class="mut">Gambar QRIS</div>${ST.qris?`<img src="${ST.qris}" alt="QRIS" style="width:160px;display:block;margin:6px 0">`:''}<input type="file" id="qf" accept="image/*"><button class="pri" style="width:100%" onclick="setSave()">Simpan</button></div>
-  <div class="card"><b>Backup & restore</b><p class="mut">Backup terakhir: ${ST.lastBackup?fd(ST.lastBackup):'belum pernah'}. Simpan file backup ke Files/iCloud atau kirim ke WhatsApp sendiri.</p><button class="pri" style="width:100%;margin-bottom:8px" onclick="backup()">Buat backup</button><input type="file" id="rf" accept=".json"><button style="width:100%" onclick="restore()">Pulihkan dari backup</button></div>`;
+  <div class="card"><b>Backup & restore</b><p class="mut">Backup terakhir: ${ST.lastBackup?fd(ST.lastBackup):'belum pernah'}. Di menu yang muncul, pilih “Simpan ke File”, lalu pilih iCloud Drive atau Di iPhone Saya.</p><button class="pri" style="width:100%;margin-bottom:8px" onclick="backup()">Buat backup</button><input type="file" id="rf" accept=".json"><button style="width:100%" onclick="restore()">Pulihkan dari backup</button></div>`;
   $('#qf').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>{const r=Math.min(1,700/Math.max(im.width,im.height)),cv=document.createElement('canvas');cv.width=im.width*r;cv.height=im.height*r;const x=cv.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,cv.width,cv.height);x.drawImage(im,0,0,cv.width,cv.height);ST.qris=cv.toDataURL('image/jpeg',.9);setSave(true)};im.src=URL.createObjectURL(f)}
 }
 async function setSave(q){if(!q)Object.assign(ST,{name:$('#s1').value.trim()||'NYEMILJAJAN',address:$('#s2').value,wa:$('#s3').value,ship:+$('#s4').value||0,howto:$('#s5').value,footer:$('#s6').value});ST.updated_at=Date.now();await save([['settings',ST]]);toast('Tersimpan');render()}
@@ -199,6 +201,57 @@ function restore(){
     await save([...d.products.map(x=>['products',x]),...d.customers.map(x=>['customers',x]),...d.transactions.map(x=>['transactions',x]),...d.payments.map(x=>['payments',x]),...(d.movements||[]).map(x=>['movements',x]),['settings',d.settings]]);
     location.reload()}catch(e){toast('File backup tidak valid')}};r.readAsText(f)
 }
+/* EXTRA: hapus, bayar, duplikat, gambar & PDF */
+function stokHist(id){const l=M.filter(m=>m.product_id===id).sort((a,b)=>b.date<a.date?-1:1).slice(0,8);return l.length?`<div class="mut" style="margin:6px 0"><b>Riwayat stok</b><br>`+l.map(m=>`${fd(m.date)} · ${m.qty>0?'+':''}${m.qty} · ${esc(m.note||'')}`).join('<br>')+`</div>`:''}
+async function delP(id){const p=P.find(x=>x.id===id),used=T.some(t=>t.items.some(i=>i.pid===id));
+  if(used){if(!confirm('Produk ini pernah terjual, jadi tidak dihapus agar riwayat aman. Nonaktifkan saja?'))return;p.active=false;p.updated_at=Date.now();await save([['products',p]])}
+  else{if(!confirm('Hapus produk "'+p.name+'" permanen?'))return;await save([],[['products',id]]);P=P.filter(x=>x.id!==id)}
+  closeS();render()}
+async function delC(id){const c=C.find(x=>x.id===id);if(!confirm('Hapus pelanggan "'+c.name+'"? Invoice lamanya tetap ada sebagai pelanggan umum.'))return;await save([],[['customers',id]]);C=C.filter(x=>x.id!==id);closeS();render()}
+async function delInv(id){const t=T.find(x=>x.id===id);if(!confirm('Hapus invoice '+t.no+'? Stok produk akan dikembalikan dan catatan pembayarannya ikut terhapus.'))return;
+  const list=[],dels=[['transactions',id]];Pay.filter(p=>p.tx_id===id).forEach(p=>dels.push(['payments',p.id]));
+  t.items.forEach(i=>{const p=i.pid&&P.find(x=>x.id===i.pid);if(p&&p.track){p.stock=(+p.stock||0)+i.qty;p.updated_at=Date.now();list.push(['products',p]);list.push(mv(p.id,i.qty,'Batal '+t.no))}});
+  await save(list,dels);T=T.filter(x=>x.id!==id);Pay=Pay.filter(p=>p.tx_id!==id);closeS();render();toast('Invoice dihapus')}
+async function payMore(id){const t=T.find(x=>x.id===id),sisa=t.total-paid(t);const v=parseFloat(prompt('Jumlah pembayaran (Rp):',sisa));if(!(v>0))return;
+  const m=prompt('Metode (QRIS / Tunai / Transfer):','QRIS')||'QRIS';const p=rec({tx_id:id,date:new Date().toISOString(),amount:Math.min(v,sisa),method:m});await save([['payments',p]]);Pay.push(p);render();invSheet(id);toast('Pembayaran dicatat')}
+function dupInv(id){const t=T.find(x=>x.id===id);cart=t.items.map(i=>{const p=i.pid&&P.find(x=>x.id===i.pid&&x.active);return {...i,price:p?p.price:i.price,cost:p?p.cost:i.cost}});tab='kasir';closeS();render();toast('Isi invoice dimasukkan ke keranjang')}
+function waText(id){const t=T.find(x=>x.id===id),c=C.find(x=>x.id===t.customer_id);window.open('https://wa.me/'+waNum(c&&c.wa)+'?text='+encodeURIComponent(invText(t)))}
+const PRE={},keyOf=t=>t.id+':'+paid(t)+':'+t.total+':'+(ST.qris?ST.qris.length:0),b2u=d=>Uint8Array.from(atob(d.split(',')[1]),c=>c.charCodeAt(0));
+async function invCanvas(t){
+  const c=C.find(x=>x.id===t.customer_id),pd=paid(t),sisa=t.total-pd,s=status(t),W=720,pd2=36;
+  const qi=(sisa>0&&ST.qris)?await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=ST.qris}):null;
+  const H=400+t.items.length*66+(t.discount?32:0)+(t.shipping?32:0)+(qi?420:0);
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const g=cv.getContext('2d');
+  const T_=(x,y,tx,f,col,al)=>{g.font=f;g.fillStyle=col||'#172033';g.textAlign=al||'left';g.fillText(tx,x,y)};
+  const fit=(tx,f,mx)=>{g.font=f;while(g.measureText(tx).width>mx&&tx.length>3)tx=tx.slice(0,-2);return tx};
+  g.fillStyle='#fff';g.fillRect(0,0,W,H);g.fillStyle='#10B981';g.fillRect(0,0,W,120);
+  T_(pd2,56,fit(ST.name,'bold 34px sans-serif',400),'bold 34px sans-serif','#fff');T_(pd2,92,fit(ST.address||'','20px sans-serif',400),'20px sans-serif','#fff');
+  T_(W-pd2,56,'INVOICE','bold 28px sans-serif','#fff','right');T_(W-pd2,92,t.no,'20px sans-serif','#fff','right');
+  let y=170;T_(pd2,y,'Tanggal: '+fd(t.date),'22px sans-serif');y+=34;T_(pd2,y,'Kepada: '+(c?c.name:'Pelanggan umum'),'bold 22px sans-serif');y+=30;
+  g.fillStyle='#E2E8F0';g.fillRect(pd2,y,W-2*pd2,2);y+=36;
+  t.items.forEach(i=>{T_(pd2,y,fit(i.name,'bold 24px sans-serif',470),'bold 24px sans-serif');T_(W-pd2,y,rp(i.qty*i.price),'24px sans-serif','#172033','right');y+=30;T_(pd2,y,i.qty+' x '+rp(i.price),'20px sans-serif','#64748B');y+=36});
+  g.fillStyle='#E2E8F0';g.fillRect(pd2,y,W-2*pd2,2);y+=36;
+  const R=(l,v,b,col)=>{const f=(b?'bold ':'')+'24px sans-serif';T_(pd2,y,l,f,col);T_(W-pd2,y,v,f,col,'right');y+=34};
+  if(t.discount)R('Diskon','-'+rp(t.discount));if(t.shipping)R('Ongkir',rp(t.shipping));R('TOTAL',rp(t.total),1);R('Dibayar',rp(pd));R('Sisa tagihan',rp(sisa),1,sisa>0?'#DC2626':'#059669');
+  T_(pd2,y+10,'Status: '+s.toUpperCase(),'bold 24px sans-serif',s==='Lunas'?'#059669':'#B45309');y+=60;
+  if(qi){const sz=340,r=Math.min(sz/qi.width,sz/qi.height);const w=qi.width*r,h=qi.height*r;g.drawImage(qi,(W-w)/2,y,w,h);y+=h+34;T_(W/2,y,fit(ST.howto||'','20px sans-serif',620),'20px sans-serif','#64748B','center');y+=40}
+  T_(W/2,y+10,fit(ST.footer||'','20px sans-serif',620),'italic 20px sans-serif','#64748B','center');
+  const out=document.createElement('canvas');out.width=W;out.height=y+50;out.getContext('2d').drawImage(cv,0,0);return out}
+function pdfFromJpeg(jpg,w,h){
+  const enc=new TextEncoder(),parts=[],off=[];let len=0;const push=b=>{if(typeof b==='string')b=enc.encode(b);parts.push(b);len+=b.length};
+  const pw=595,ph=Math.round(595*h/w),obj=(n,x)=>{off[n]=len;push(n+' 0 obj\n'+x+'\nendobj\n')};
+  push('%PDF-1.4\n');obj(1,'<< /Type /Catalog /Pages 2 0 R >>');obj(2,'<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+pw+' '+ph+'] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>');
+  off[4]=len;push('4 0 obj\n<< /Type /XObject /Subtype /Image /Width '+w+' /Height '+h+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+jpg.length+' >>\nstream\n');push(jpg);push('\nendstream\nendobj\n');
+  const cs='q '+pw+' 0 0 '+ph+' 0 0 cm /Im0 Do Q';obj(5,'<< /Length '+cs.length+' >>\nstream\n'+cs+'\nendstream');
+  const xr=len;let x='xref\n0 6\n0000000000 65535 f \n';for(let i=1;i<=5;i++)x+=String(off[i]).padStart(10,'0')+' 00000 n \n';
+  push(x+'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xr+'\n%%EOF');
+  const o=new Uint8Array(len);let p=0;parts.forEach(b=>{o.set(b,p);p+=b.length});return o}
+async function prep(t){const k=keyOf(t);if(PRE[k])return;try{const cv=await invCanvas(t),n=t.no;
+  PRE[k]={png:new File([b2u(cv.toDataURL('image/png'))],n+'.png',{type:'image/png'}),pdf:new File([pdfFromJpeg(b2u(cv.toDataURL('image/jpeg',.92)),cv.width,cv.height)],n+'.pdf',{type:'application/pdf'})}}catch(e){}}
+async function sendF(id,k){const t=T.find(x=>x.id===id),f=PRE[keyOf(t)];if(!f){prep(t);return toast('Menyiapkan file, tekan lagi sebentar')}
+  const file=f[k];try{if(navigator.canShare&&navigator.canShare({files:[file]}))await navigator.share({files:[file],title:t.no});else{const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=file.name;a.click();toast('File diunduh')}}catch(e){}}
+
 init();
 </script>
 </body>
