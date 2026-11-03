@@ -143,7 +143,7 @@ function invSheet(id){
   <tr><td><b>TOTAL</b></td><td><b>${rp(t.total)}</b></td></tr><tr><td>Dibayar</td><td>${rp(pd)}</td></tr><tr><td><b>Sisa</b></td><td><b>${rp(sisa)}</b></td></tr></table>
   <p><span class="pill ${s==='Lunas'?'':s==='Sebagian'?'o':'r'}">${s}</span></p>
   ${sisa>0&&ST.qris?`<img src="${ST.qris}" alt="QRIS"><div class="mut" style="text-align:center">${esc(ST.howto)}</div>`:''}<p class="mut" style="text-align:center">${esc(ST.footer)}</p></div>
-  <div class="np"><div class="row" style="margin-top:10px"><button class="pri f1" onclick="sendF('${id}','png')">📷 Kirim gambar</button><button class="pri f1" onclick="sendF('${id}','pdf')">📄 Kirim PDF</button></div>
+  <div class="np"><div class="row" style="margin-top:10px"><button class="pri f1" onclick="sendF('${id}','png')">📷 Gambar + teks</button><button class="pri f1" onclick="sendF('${id}','pdf')">📄 PDF + teks</button></div>
   <div class="row" style="margin-top:8px"><button class="f1" onclick="waText('${id}')">WA teks</button>${sisa>0?`<button class="f1" onclick="payMore('${id}')">Catat bayar</button>`:''}<button class="f1" onclick="dupInv('${id}')">Duplikat</button></div>
   <div class="row" style="margin-top:8px"><button class="dng f1" onclick="delInv('${id}')">Hapus</button><button class="f1" onclick="closeS()">Tutup</button></div></div>`);prep(t)
 }
@@ -250,7 +250,7 @@ function pdfFromJpeg(jpg,w,h){
 async function prep(t){const k=keyOf(t);if(PRE[k])return;try{const cv=await invCanvas(t),n=t.no;
   PRE[k]={png:new File([b2u(cv.toDataURL('image/png'))],n+'.png',{type:'image/png'}),pdf:new File([pdfFromJpeg(b2u(cv.toDataURL('image/jpeg',.92)),cv.width,cv.height)],n+'.pdf',{type:'application/pdf'})}}catch(e){}}
 async function sendF(id,k){const t=T.find(x=>x.id===id),f=PRE[keyOf(t)];if(!f){prep(t);return toast('Menyiapkan file, tekan lagi sebentar')}
-  const file=f[k];try{if(navigator.canShare&&navigator.canShare({files:[file]}))await navigator.share({files:[file],title:t.no});else{const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=file.name;a.click();toast('File diunduh')}}catch(e){}}
+  const file=f[k],txt=invText(t);try{navigator.clipboard&&navigator.clipboard.writeText(txt).catch(()=>{})}catch(e){}try{if(navigator.canShare&&navigator.canShare({files:[file],text:txt})){toast('Teks juga disalin, tempel jika tidak muncul');await navigator.share({files:[file],text:txt,title:t.no})}else if(navigator.canShare&&navigator.canShare({files:[file]}))await navigator.share({files:[file],title:t.no});else{const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=file.name;a.click();toast('File diunduh')}}catch(e){}}
 
 init();
 </script>
