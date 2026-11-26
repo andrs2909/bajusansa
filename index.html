@@ -220,7 +220,7 @@ const PRE={},keyOf=t=>t.id+':'+paid(t)+':'+t.total+':'+(ST.qris?ST.qris.length:0
 async function invCanvas(t){
   const c=C.find(x=>x.id===t.customer_id),pd=paid(t),sisa=t.total-pd,s=status(t),W=720,pd2=36;
   const qi=(sisa>0&&ST.qris)?await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=ST.qris}):null;
-  const H=400+t.items.length*66+(t.discount?32:0)+(t.shipping?32:0)+(qi?420:0);
+  const H=3200;
   const cv=document.createElement('canvas');cv.width=W;cv.height=H;const g=cv.getContext('2d');
   const T_=(x,y,tx,f,col,al)=>{g.font=f;g.fillStyle=col||'#172033';g.textAlign=al||'left';g.fillText(tx,x,y)};
   const fit=(tx,f,mx)=>{g.font=f;while(g.measureText(tx).width>mx&&tx.length>3)tx=tx.slice(0,-2);return tx};
