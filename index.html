@@ -59,36 +59,36 @@ const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>(
 const rp=n=>'Rp '+Math.round(n||0).toLocaleString('id-ID'),p2=n=>String(n).padStart(2,'0');
 const fd=d=>{d=new Date(d);return p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+d.getFullYear()};
 const CATS=['Jastip','Frozen Food','Snack','Lainnya'];
-const STORES=['products','customers','transactions','payments','movements','settings'];
-let db,P=[],C=[],T=[],Pay=[],M=[],ST={id:'main',name:'NYEMILJAJAN',address:'',wa:'',footer:'Terima kasih sudah belanja!',ship:0,howto:'Scan QRIS lalu kirim bukti bayar.',qris:'',lastBackup:0};
-let tab='kasir',cat='Semua',q='',cart=[];
-const NAV=[['kasir','🛒','Kasir'],['produk','📦','Produk'],['pelanggan','👥','Pelanggan'],['invoice','🧾','Invoice'],['set','⚙️','Atur']];
+const STORES=['products','customers','transactions','payments','movements','settings','recipes'];
+let db,P=[],C=[],T=[],Pay=[],M=[],RC=[],ST={id:'main',name:'NYEMILJAJAN',address:'',wa:'',footer:'Terima kasih sudah belanja!',ship:0,howto:'Scan QRIS lalu kirim bukti bayar.',qris:'',lastBackup:0,pin:''};
+let icust='',itab='belum',tab='kasir',cat='Semua',q='',cart=[];
+const NAV=[['home','📊','Beranda'],['kasir','🛒','Kasir'],['produk','📦','Produk'],['invoice','🧾','Invoice'],['more','☰','Lainnya']];
 
-function openDB(){return new Promise((ok,no)=>{const r=indexedDB.open('nyemiljajan',1);r.onupgradeneeded=()=>STORES.forEach(s=>r.result.createObjectStore(s,{keyPath:'id'}));r.onsuccess=()=>{db=r.result;ok()};r.onerror=()=>no(r.error)})}
+function openDB(){return new Promise((ok,no)=>{const r=indexedDB.open('nyemiljajan',2);r.onupgradeneeded=()=>STORES.forEach(s=>{if(!r.result.objectStoreNames.contains(s))r.result.createObjectStore(s,{keyPath:'id'})});r.onsuccess=()=>{db=r.result;ok()};r.onerror=()=>no(r.error)})}
 const getAll=s=>new Promise((ok,no)=>{const r=db.transaction(s).objectStore(s).getAll();r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
 function putMany(list,dels=[]){return new Promise((ok,no)=>{const names=[...new Set([...list,...dels].map(x=>x[0]))],t=db.transaction(names,'readwrite');list.forEach(([s,o])=>t.objectStore(s).put(o));dels.forEach(([s,id])=>t.objectStore(s).delete(id));t.oncomplete=ok;t.onerror=()=>no(t.error);t.onabort=()=>no(t.error)})}
 const rec=o=>({id:crypto.randomUUID(),store_id:'main',created_at:Date.now(),updated_at:Date.now(),...o});
 const mv=(pid,qty,note)=>{const m=rec({product_id:pid,qty,note,date:new Date().toISOString()});M.push(m);return ['movements',m]};
 const paid=t=>Pay.filter(p=>p.tx_id===t.id).reduce((a,p)=>a+p.amount,0);
-const status=t=>{const s=t.total-paid(t);return s<=0?'Lunas':paid(t)>0?'Sebagian':'Belum bayar'};
+const status=t=>{if(t.void)return 'Batal';const s=t.total-paid(t);return s<=0?'Lunas':paid(t)>0?'Sebagian':'Belum bayar'};
 function toast(m){const e=document.createElement('div');e.className='toast';e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),2200)}
 async function save(list,dels){try{await putMany(list,dels||[])}catch(e){toast('Gagal menyimpan, coba lagi');throw e}}
 
 async function init(){
   await openDB();
-  [P,C,T,Pay,M]=await Promise.all(['products','customers','transactions','payments','movements'].map(getAll));
-  const s=await getAll('settings');if(s[0])Object.assign(ST,s[0]);
+  [P,C,T,Pay,M,RC]=await Promise.all(['products','customers','transactions','payments','movements','recipes'].map(getAll));
+  T.sort((a,b)=>b.date<a.date?-1:b.date>a.date?1:0);const s=await getAll('settings');if(s[0])Object.assign(ST,s[0]);
   if(!P.length){P=[['Cireng Isi Ayam Pedas','Frozen Food',7000,12000,50,'pcs',1],['Bakso Malang Frozen','Frozen Food',17000,25000,30,'pack',1],['Jastip Skincare (contoh)','Jastip',70000,85000,0,'pcs',0]].map(([name,category,cost,price,stock,unit,track])=>rec({sku:'',name,category,cost,price,stock,unit,track,active:true}));await save(P.map(x=>['products',x]))}
   try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
-  if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
-  render();
+  if('serviceWorker' in navigator){const had=!!navigator.serviceWorker.controller;navigator.serviceWorker.register('sw.js').catch(()=>{});navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had)toast('Versi baru terpasang, buka ulang aplikasi')})}
+  render();lock();let hid=0;document.addEventListener('visibilitychange',()=>{if(document.hidden)hid=Date.now();else if(ST.pin&&Date.now()-hid>60000)lock()})
 }
 function render(){
-  $('#nav').innerHTML=NAV.map(([k,i,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')"><b>${i}</b>${l}</button>`).join('');
+  $('#nav').innerHTML=NAV.map(([k,i,l])=>`<button class="${tab===k||(k==='more'&&['pelanggan','resep','stok','set'].includes(tab))?'on':''}" onclick="go('${k}')"><b>${i}</b>${l}</button>`).join('');
   $('#bar').innerHTML='';
   const old=!ST.lastBackup||Date.now()-ST.lastBackup>7*864e5;
   const warn=(T.length&&old)?`<div class="warn">⚠️ Data hanya tersimpan di HP ini. Segera buat backup di menu Atur.</div>`:'';
-  $('#v').innerHTML=warn+'<div id="c"></div>';({kasir:vKasir,produk:vProduk,pelanggan:vPel,invoice:vInv,set:vSet})[tab]();
+  $('#v').innerHTML=warn+'<div id="c"></div>';({home:vHome,more:vMore,resep:vResep,stok:vStok,kasir:vKasir,produk:vProduk,pelanggan:vPel,invoice:vInv,set:vSet})[tab]();
 }
 function go(t){tab=t;render()}
 function sheet(h){$('#sh').innerHTML=`<div class="ov" onclick="if(event.target===this)closeS()"><div class="sheet">${h}</div></div>`}
@@ -104,7 +104,7 @@ function drawG(){
   $('#g').innerHTML=l.map(p=>`<button class="card prod" onclick="add('${p.id}')"><span>${esc(p.name)}</span><span class="mut">${esc(p.category)}${p.track?' · stok '+p.stock:''}</span><span class="p">${rp(p.price)}</span></button>`).join('')+`<button class="card prod" onclick="freeItem()"><span>➕ Item bebas</span><span class="mut">harga jastip custom</span></button>`;
 }
 function drawBar(){const n=cart.reduce((a,c)=>a+c.qty,0);$('#bar').innerHTML=n?`<button class="pri" onclick="cartSheet()">Keranjang (${n}) · ${rp(cart.reduce((a,c)=>a+c.qty*c.price,0))}</button>`:''}
-function add(id){const p=P.find(x=>x.id===id),e=cart.find(c=>c.pid===id);e?e.qty++:cart.push({pid:id,name:p.name,category:p.category,price:p.price,cost:p.cost,qty:1});drawBar()}
+function add(id){const p=P.find(x=>x.id===id),e=cart.find(c=>c.pid===id);if(p.track&&((e?e.qty:0)+1)>p.stock)return toast('Stok '+p.name+' tidak cukup');e?e.qty++:cart.push({pid:id,name:p.name,category:p.category,price:p.price,cost:p.cost,qty:1});drawBar()}
 function freeItem(){const n=prompt('Nama barang jastip:');if(!n)return;const pr=parseFloat(prompt('Harga jual (Rp):'));if(!(pr>=0))return toast('Harga tidak valid');const hp=parseFloat(prompt('Modal/HPP (Rp), boleh kosong:'))||0;cart.push({pid:null,name:n,category:'Jastip',price:pr,cost:hp,qty:1});drawBar()}
 function cartSheet(){
   const lines=cart.map((c,i)=>`<div class="line row sp"><div class="f1"><b>${esc(c.name)}</b><div class="mut">${rp(c.price)}</div></div><div class="row q"><button onclick="qty(${i},-1)">−</button><b>${c.qty}</b><button onclick="qty(${i},1)">+</button></div></div>`).join('');
@@ -118,7 +118,7 @@ function cartSheet(){
   <div class="row sp card"><span>Total</span><b id="tot" style="font-size:22px"></b></div>
   <div class="row"><button onclick="closeS()">Tutup</button><button class="dng" onclick="cart=[];closeS();drawBar()">Kosongkan</button><button class="pri f1" onclick="checkout()">Checkout</button></div>`);calc()
 }
-function qty(i,d){cart[i].qty+=d;if(cart[i].qty<=0)cart.splice(i,1);drawBar();cart.length?cartSheet():closeS()}
+function qty(i,d){const pp=cart[i].pid&&P.find(x=>x.id===cart[i].pid);if(d>0&&pp&&pp.track&&cart[i].qty+d>pp.stock)return toast('Stok tidak cukup');cart[i].qty+=d;if(cart[i].qty<=0)cart.splice(i,1);drawBar();cart.length?cartSheet():closeS()}
 function calc(){const sub=cart.reduce((a,c)=>a+c.qty*c.price,0),d=+$('#di').value||0,s=+$('#sh2').value||0,t=Math.max(0,sub-d+s);$('#tot').textContent=rp(t);return{sub,d,s,t}}
 async function checkout(){
   if(!cart.length)return;const f=calc(),now=new Date();let cid=$('#cs').value;const list=[];
@@ -140,14 +140,19 @@ function invSheet(id){
   <div class="row sp"><b>${t.no}</b><span class="mut">${fd(t.date)}</span></div>${c?`<div>Kepada: <b>${esc(c.name)}</b></div>`:''}<hr>
   <table>${t.items.map(i=>`<tr><td>${esc(i.name)}<div class="mut">${i.qty} x ${rp(i.price)}</div></td><td>${rp(i.qty*i.price)}</td></tr>`).join('')}
   ${t.discount?`<tr><td>Diskon</td><td>-${rp(t.discount)}</td></tr>`:''}${t.shipping?`<tr><td>Ongkir</td><td>${rp(t.shipping)}</td></tr>`:''}
-  <tr><td><b>TOTAL</b></td><td><b>${rp(t.total)}</b></td></tr><tr><td>Dibayar</td><td>${rp(pd)}</td></tr><tr><td><b>Sisa</b></td><td><b>${rp(sisa)}</b></td></tr></table>
+  <tr><td><b>TOTAL</b></td><td><b>${rp(t.total)}</b></td></tr><tr><td>Dibayar</td><td>${rp(pd)}</td></tr>${Pay.filter(p=>p.tx_id===id).map(p=>`<tr><td class="mut">• ${fd(p.date)} ${esc(p.method)}</td><td class="mut">${rp(p.amount)}</td></tr>`).join('')}<tr><td><b>Sisa</b></td><td><b>${rp(sisa)}</b></td></tr></table>
   <p><span class="pill ${s==='Lunas'?'':s==='Sebagian'?'o':'r'}">${s}</span></p>
-  ${sisa>0&&ST.qris?`<img src="${ST.qris}" alt="QRIS"><div class="mut" style="text-align:center">${esc(ST.howto)}</div>`:''}<p class="mut" style="text-align:center">${esc(ST.footer)}</p></div>
+  ${sisa<=0&&!t.void?'<div class="mut" style="text-align:center">Lunas, jadi QRIS tidak ditampilkan.</div>':''}${sisa>0&&ST.qris?`<img src="${ST.qris}" alt="QRIS"><div class="mut" style="text-align:center">${esc(ST.howto)}</div>`:''}<p class="mut" style="text-align:center">${esc(ST.footer)}</p></div>
   <div class="np"><div class="row" style="margin-top:10px"><button class="pri f1" onclick="sendF('${id}','png')">📷 Gambar + teks</button><button class="pri f1" onclick="sendF('${id}','pdf')">📄 PDF + teks</button></div>
-  <div class="row" style="margin-top:8px"><button class="f1" onclick="waText('${id}')">WA teks</button>${sisa>0?`<button class="f1" onclick="payMore('${id}')">Catat bayar</button>`:''}<button class="f1" onclick="dupInv('${id}')">Duplikat</button></div>
-  <div class="row" style="margin-top:8px"><button class="dng f1" onclick="delInv('${id}')">Hapus</button><button class="f1" onclick="closeS()">Tutup</button></div></div>`);prep(t)
+  <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="f1" onclick="waText('${id}')">WA teks</button>${sisa>0&&!t.void?`<button class="f1" onclick="payMore('${id}')">Catat bayar</button><button class="f1" onclick="remind('${id}')">🔔 Ingatkan</button>`:''}<button class="f1" onclick="dupInv('${id}')">Duplikat</button></div>
+  <div class="row" style="margin-top:8px">${t.void?'':`<button class="dng f1" onclick="voidInv('${id}')">Batalkan</button>`}<button class="f1" onclick="closeS()">Tutup</button></div></div>`);prep(t)
 }
-function vInv(){$('#c').innerHTML=`<h2>Invoice</h2>`+(T.length?T.map(t=>{const c=C.find(x=>x.id===t.customer_id),s=status(t);return `<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${esc(c?c.name:'Umum')} · ${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div><span class="pill ${s==='Lunas'?'':s==='Sebagian'?'o':'r'}">${s}</span></div></div></div>`}).join(''):'<p class="mut">Belum ada transaksi.</p>')}
+function vInv(){
+  const L=[...T].sort((a,b)=>b.date<a.date?-1:b.date>a.date?1:0),lun=t=>status(t)==='Lunas',nb=L.filter(t=>['Belum bayar','Sebagian'].includes(status(t))&&(!icust||t.customer_id===icust)),sisa=nb.reduce((a,t)=>a+t.total-paid(t),0),
+  F=itab==='semua'?L:itab==='lunas'?L.filter(lun):nb;
+  $('#c').innerHTML=`<h2>Invoice</h2><div class="chips">${[['belum','Belum lunas ('+nb.length+')'],['lunas','Lunas ('+L.filter(lun).length+')'],['semua','Semua ('+L.length+')']].map(([k,l])=>`<button class="chip ${itab===k?'on':''}" onclick="itab='${k}';vInv()">${l}</button>`).join('')}</div>`
+  +(itab==='belum'?`<select onchange="icust=this.value;vInv()"><option value="">Semua pelanggan</option>${C.map(c=>`<option value="${c.id}" ${icust===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>`:'')+(itab==='belum'&&nb.length?`<div class="card row sp"><span class="mut">Total piutang</span><b style="color:var(--rd)">${rp(sisa)}</b></div>`:'')
+  +(F.length?F.map(t=>{const c=C.find(x=>x.id===t.customer_id),s=status(t);return `<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${esc(c?c.name:'Umum')} · ${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div><span class="pill ${s==='Lunas'?'':s==='Sebagian'?'o':'r'}">${s}</span></div></div></div>`}).join(''):'<p class="mut">Tidak ada invoice di tab ini.</p>')}
 
 /* PRODUK */
 function vProduk(){
@@ -174,22 +179,22 @@ async function pSave(id){
 
 /* PELANGGAN */
 function vPel(){
-  $('#c').innerHTML=`<div class="row sp"><h2>Pelanggan</h2><button class="pri" onclick="cForm()">+ Tambah</button></div>`+(C.length?C.map(c=>{const ts=T.filter(t=>t.customer_id===c.id),tot=ts.reduce((a,t)=>a+t.total,0),ut=ts.reduce((a,t)=>a+t.total-paid(t),0);return `<div class="card row sp" onclick="cDetail('${c.id}')"><div><b>${esc(c.name)}</b><div class="mut">${esc(c.wa||'-')}</div></div><div style="text-align:right"><div class="mut">Belanja ${rp(tot)}</div>${ut>0?`<span class="pill r">Utang ${rp(ut)}</span>`:''}</div></div>`}).join(''):'<p class="mut">Belum ada pelanggan.</p>')
+  $('#c').innerHTML=`<div class="row sp"><h2>Pelanggan</h2><button class="pri" onclick="cForm()">+ Tambah</button></div>`+(C.length?C.map(c=>{const ts=T.filter(t=>t.customer_id===c.id&&!t.void),tot=ts.reduce((a,t)=>a+t.total,0),ut=ts.reduce((a,t)=>a+t.total-paid(t),0);return `<div class="card row sp" onclick="cDetail('${c.id}')"><div><b>${esc(c.name)}</b><div class="mut">${esc(c.wa||'-')}</div></div><div style="text-align:right"><div class="mut">Belanja ${rp(tot)}</div>${ut>0?`<span class="pill r">Utang ${rp(ut)}</span>`:''}</div></div>`}).join(''):'<p class="mut">Belum ada pelanggan.</p>')
 }
 function cForm(id){const c=C.find(x=>x.id===id)||{name:'',wa:'',address:''};sheet(`<h2>${id?'Ubah':'Tambah'} pelanggan</h2><input id="a" placeholder="Nama" value="${esc(c.name)}"><input id="b" inputmode="tel" placeholder="WhatsApp" value="${esc(c.wa)}"><input id="d" placeholder="Alamat / catatan" value="${esc(c.address)}"><div class="row"><button onclick="closeS()">Batal</button><button class="pri f1" onclick="cSave('${id||''}')">Simpan</button></div>`)}
 async function cSave(id){const n=$('#a').value.trim();if(!n)return toast('Isi nama');let c=C.find(x=>x.id===id);if(!c){c=rec({});C.push(c)}Object.assign(c,{name:n,wa:$('#b').value.trim(),address:$('#d').value.trim(),updated_at:Date.now()});await save([['customers',c]]);closeS();render()}
-function cDetail(id){const c=C.find(x=>x.id===id),ts=T.filter(t=>t.customer_id===id);sheet(`<h2>${esc(c.name)}</h2><div class="mut">${esc(c.wa||'')} ${esc(c.address||'')}</div><div class="row" style="margin:8px 0"><button class="f1" onclick="cForm('${id}')">✏️ Ubah data</button><button class="dng" onclick="delC('${id}')">Hapus</button></div>`+(ts.length?ts.map(t=>`<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div class="mut">${status(t)}</div></div></div>`).join(''):'<p class="mut">Belum ada pembelian.</p>')+`<button onclick="closeS()">Tutup</button>`)}
+function cDetail(id){const c=C.find(x=>x.id===id),ts=T.filter(t=>t.customer_id===id).sort((a,b)=>b.date<a.date?-1:1);sheet(`<h2>${esc(c.name)}</h2><div class="mut">${esc(c.wa||'')} ${esc(c.address||'')}</div><div class="row" style="margin:8px 0"><button class="f1" onclick="cForm('${id}')">✏️ Ubah data</button><button class="dng" onclick="delC('${id}')">Hapus</button></div>`+(ts.length?ts.map(t=>`<div class="card row sp" onclick="invSheet('${t.id}')"><div><b>${t.no}</b><div class="mut">${fd(t.date)}</div></div><div style="text-align:right"><b>${rp(t.total)}</b><div class="mut">${status(t)}</div></div></div>`).join(''):'<p class="mut">Belum ada pembelian.</p>')+`<button onclick="closeS()">Tutup</button>`)}
 
 /* ATUR */
 function vSet(){
   $('#c').innerHTML=`<h2>Pengaturan</h2><div class="card"><b>Info toko</b><input id="s1" placeholder="Nama toko" value="${esc(ST.name)}"><input id="s2" placeholder="Alamat" value="${esc(ST.address)}"><input id="s3" placeholder="WhatsApp toko" value="${esc(ST.wa)}"><input id="s4" type="number" inputmode="numeric" placeholder="Ongkir default" value="${ST.ship||''}"><input id="s5" placeholder="Instruksi bayar" value="${esc(ST.howto)}"><input id="s6" placeholder="Footer invoice" value="${esc(ST.footer)}">
   <div class="mut">Gambar QRIS</div>${ST.qris?`<img src="${ST.qris}" alt="QRIS" style="width:160px;display:block;margin:6px 0">`:''}<input type="file" id="qf" accept="image/*"><button class="pri" style="width:100%" onclick="setSave()">Simpan</button></div>
-  <div class="card"><b>Backup & restore</b><p class="mut">Backup terakhir: ${ST.lastBackup?fd(ST.lastBackup):'belum pernah'}. Di menu yang muncul, pilih “Simpan ke File”, lalu pilih iCloud Drive atau Di iPhone Saya.</p><button class="pri" style="width:100%;margin-bottom:8px" onclick="backup()">Buat backup</button><input type="file" id="rf" accept=".json"><button style="width:100%" onclick="restore()">Pulihkan dari backup</button></div>`;
+  <div class="card"><b>Keamanan</b><p class="mut">PIN ${ST.pin?'aktif':'belum diatur'}. Dipakai saat membuka aplikasi dan membatalkan invoice.</p><button style="width:100%" onclick="setPin()">${ST.pin?'Ubah / hapus PIN':'Atur PIN'}</button></div><div class="card"><b>Backup & restore</b><p class="mut">Backup terakhir: ${ST.lastBackup?fd(ST.lastBackup):'belum pernah'}. Di menu yang muncul, pilih “Simpan ke File”, lalu pilih iCloud Drive atau Di iPhone Saya.</p><button class="pri" style="width:100%;margin-bottom:8px" onclick="backup()">Buat backup</button><input type="file" id="rf" accept=".json"><button style="width:100%" onclick="restore()">Pulihkan dari backup</button></div><p class="mut" style="text-align:center">Versi aplikasi: v7</p>`;
   $('#qf').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>{const r=Math.min(1,700/Math.max(im.width,im.height)),cv=document.createElement('canvas');cv.width=im.width*r;cv.height=im.height*r;const x=cv.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,cv.width,cv.height);x.drawImage(im,0,0,cv.width,cv.height);ST.qris=cv.toDataURL('image/jpeg',.9);setSave(true)};im.src=URL.createObjectURL(f)}
 }
 async function setSave(q){if(!q)Object.assign(ST,{name:$('#s1').value.trim()||'NYEMILJAJAN',address:$('#s2').value,wa:$('#s3').value,ship:+$('#s4').value||0,howto:$('#s5').value,footer:$('#s6').value});ST.updated_at=Date.now();await save([['settings',ST]]);toast('Tersimpan');render()}
 async function backup(){
-  const data=JSON.stringify({v:1,at:Date.now(),products:P,customers:C,transactions:T,payments:Pay,movements:await getAll('movements'),settings:ST});
+  const data=JSON.stringify({v:1,at:Date.now(),products:P,customers:C,transactions:T,payments:Pay,movements:await getAll('movements'),recipes:RC,settings:ST});
   const name='backup-nyemiljajan-'+fd(Date.now()).replace(/\//g,'-')+'.json',file=new File([data],name,{type:'application/json'});
   try{if(navigator.canShare&&navigator.canShare({files:[file]}))await navigator.share({files:[file],title:name});else{const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=name;a.click()}
     ST.lastBackup=Date.now();await save([['settings',ST]]);toast('Backup dibuat');render()}catch(e){toast('Backup dibatalkan')}
@@ -198,7 +203,7 @@ function restore(){
   const f=$('#rf').files[0];if(!f)return toast('Pilih file backup dulu');
   const r=new FileReader();r.onload=async()=>{try{const d=JSON.parse(r.result);if(!d.products||!d.settings)throw 0;if(!confirm('Timpa semua data di HP ini dengan backup?'))return;
     await new Promise((ok,no)=>{const t=db.transaction(STORES,'readwrite');STORES.forEach(s=>t.objectStore(s).clear());t.oncomplete=ok;t.onerror=no});
-    await save([...d.products.map(x=>['products',x]),...d.customers.map(x=>['customers',x]),...d.transactions.map(x=>['transactions',x]),...d.payments.map(x=>['payments',x]),...(d.movements||[]).map(x=>['movements',x]),['settings',d.settings]]);
+    await save([...d.products.map(x=>['products',x]),...d.customers.map(x=>['customers',x]),...d.transactions.map(x=>['transactions',x]),...d.payments.map(x=>['payments',x]),...(d.movements||[]).map(x=>['movements',x]),...(d.recipes||[]).map(x=>['recipes',x]),['settings',d.settings]]);
     location.reload()}catch(e){toast('File backup tidak valid')}};r.readAsText(f)
 }
 /* EXTRA: hapus, bayar, duplikat, gambar & PDF */
@@ -219,7 +224,7 @@ function waText(id){const t=T.find(x=>x.id===id),c=C.find(x=>x.id===t.customer_i
 const PRE={},keyOf=t=>t.id+':'+paid(t)+':'+t.total+':'+(ST.qris?ST.qris.length:0),b2u=d=>Uint8Array.from(atob(d.split(',')[1]),c=>c.charCodeAt(0));
 async function invCanvas(t){
   const c=C.find(x=>x.id===t.customer_id),pd=paid(t),sisa=t.total-pd,s=status(t),W=720,pd2=36;
-  const qi=(sisa>0&&ST.qris)?await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=ST.qris}):null;
+  const qi=(sisa>0&&ST.qris)?await new Promise(r=>{const i=new Image();i.onload=()=>(i.decode?i.decode().then(()=>r(i),()=>r(i)):r(i));i.onerror=()=>r(null);i.src=ST.qris}):null;
   const H=3200;
   const cv=document.createElement('canvas');cv.width=W;cv.height=H;const g=cv.getContext('2d');
   const T_=(x,y,tx,f,col,al)=>{g.font=f;g.fillStyle=col||'#172033';g.textAlign=al||'left';g.fillText(tx,x,y)};
@@ -232,9 +237,9 @@ async function invCanvas(t){
   t.items.forEach(i=>{T_(pd2,y,fit(i.name,'bold 24px sans-serif',470),'bold 24px sans-serif');T_(W-pd2,y,rp(i.qty*i.price),'24px sans-serif','#172033','right');y+=30;T_(pd2,y,i.qty+' x '+rp(i.price),'20px sans-serif','#64748B');y+=36});
   g.fillStyle='#E2E8F0';g.fillRect(pd2,y,W-2*pd2,2);y+=36;
   const R=(l,v,b,col)=>{const f=(b?'bold ':'')+'24px sans-serif';T_(pd2,y,l,f,col);T_(W-pd2,y,v,f,col,'right');y+=34};
-  if(t.discount)R('Diskon','-'+rp(t.discount));if(t.shipping)R('Ongkir',rp(t.shipping));R('TOTAL',rp(t.total),1);R('Dibayar',rp(pd));R('Sisa tagihan',rp(sisa),1,sisa>0?'#DC2626':'#059669');
+  if(t.discount)R('Diskon','-'+rp(t.discount));if(t.shipping)R('Ongkir',rp(t.shipping));R('TOTAL',rp(t.total),1);R('Dibayar',rp(pd));Pay.filter(p=>p.tx_id===t.id).forEach(p=>{T_(pd2+12,y,'• '+fd(p.date)+' · '+p.method,'18px sans-serif','#64748B');T_(W-pd2,y,rp(p.amount),'18px sans-serif','#64748B','right');y+=26});R('Sisa tagihan',rp(sisa),1,sisa>0?'#DC2626':'#059669');
   T_(pd2,y+10,'Status: '+s.toUpperCase(),'bold 24px sans-serif',s==='Lunas'?'#059669':'#B45309');y+=60;
-  if(qi){const sz=340,r=Math.min(sz/qi.width,sz/qi.height);const w=qi.width*r,h=qi.height*r;g.drawImage(qi,(W-w)/2,y,w,h);y+=h+34;T_(W/2,y,fit(ST.howto||'','20px sans-serif',620),'20px sans-serif','#64748B','center');y+=40}
+  if(qi){const sz=340,r=Math.min(sz/qi.width,sz/qi.height);const w=qi.width*r,h=qi.height*r;g.drawImage(qi,(W-w)/2,y,w,h);y+=h+34;T_(W/2,y,fit(ST.howto||'','20px sans-serif',620),'20px sans-serif','#64748B','center');y+=40}else if(sisa>0&&!t.void){T_(W/2,y+20,ST.qris?'QRIS gagal dimuat - upload ulang di Pengaturan':'QRIS belum diunggah - isi di Pengaturan','bold 20px sans-serif','#DC2626','center');y+=50}
   T_(W/2,y+10,fit(ST.footer||'','20px sans-serif',620),'italic 20px sans-serif','#64748B','center');
   const out=document.createElement('canvas');out.width=W;out.height=y+50;out.getContext('2d').drawImage(cv,0,0);return out}
 function pdfFromJpeg(jpg,w,h){
@@ -251,6 +256,49 @@ async function prep(t){const k=keyOf(t);if(PRE[k])return;try{const cv=await invC
   PRE[k]={png:new File([b2u(cv.toDataURL('image/png'))],n+'.png',{type:'image/png'}),pdf:new File([pdfFromJpeg(b2u(cv.toDataURL('image/jpeg',.92)),cv.width,cv.height)],n+'.pdf',{type:'application/pdf'})}}catch(e){}}
 async function sendF(id,k){const t=T.find(x=>x.id===id),f=PRE[keyOf(t)];if(!f){prep(t);return toast('Menyiapkan file, tekan lagi sebentar')}
   const file=f[k],txt=invText(t);try{navigator.clipboard&&navigator.clipboard.writeText(txt).catch(()=>{})}catch(e){}try{if(navigator.canShare&&navigator.canShare({files:[file],text:txt})){toast('Teks juga disalin, tempel jika tidak muncul');await navigator.share({files:[file],text:txt,title:t.no})}else if(navigator.canShare&&navigator.canShare({files:[file]}))await navigator.share({files:[file],title:t.no});else{const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=file.name;a.click();toast('File diunduh')}}catch(e){}}
+
+/* TAHAP A/B: beranda, stok, resep, PIN, void, CSV */
+const hashPin=async p=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('nj:'+p)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+async function needPin(){if(!ST.pin)return true;const p=prompt('Masukkan PIN');if(p===null)return false;if(await hashPin(p)===ST.pin)return true;toast('PIN salah');return false}
+async function setPin(){if(!await needPin())return;const a=prompt('PIN baru (4-6 angka). Kosongkan untuk menghapus PIN:');if(a===null)return;
+  if(a===''){ST.pin='';}else{if(!/^\d{4,6}$/.test(a))return toast('PIN harus 4-6 angka');if(prompt('Ulangi PIN baru:')!==a)return toast('PIN tidak sama');ST.pin=await hashPin(a)}
+  await save([['settings',ST]]);toast(ST.pin?'PIN disimpan':'PIN dihapus');render()}
+function lock(){if(!ST.pin)return;$('#sh').innerHTML=`<div class="ov" style="align-items:center;background:var(--bg)"><div class="sheet" style="border-radius:20px;text-align:center"><h2>🔒 ${esc(ST.name)}</h2><input id="lp" type="password" inputmode="numeric" placeholder="PIN" style="text-align:center;font-size:22px"><button class="pri" style="width:100%" onclick="unlock()">Buka</button></div></div>`}
+async function unlock(){if(await hashPin($('#lp').value)===ST.pin)closeS();else{toast('PIN salah');$('#lp').value=''}}
+async function voidInv(id){const t=T.find(x=>x.id===id);if(!await needPin())return;if(!confirm('Batalkan invoice '+t.no+'? Datanya tetap tersimpan sebagai BATAL dan stok dikembalikan.'))return;
+  const list=[];t.items.forEach(i=>{const p=i.pid&&P.find(x=>x.id===i.pid);if(p&&p.track){p.stock=(+p.stock||0)+i.qty;p.updated_at=Date.now();list.push(['products',p]);list.push(mv(p.id,i.qty,'Batal '+t.no))}});
+  t.void=true;t.void_at=Date.now();t.updated_at=Date.now();list.push(['transactions',t]);await save(list);closeS();render();toast('Invoice dibatalkan')}
+function remind(id){const t=T.find(x=>x.id===id),c=C.find(x=>x.id===t.customer_id),s=t.total-paid(t);
+  const m=`Halo kak ${c?c.name:''} 😊, kami dari ${ST.name}. Mengingatkan dengan sopan bahwa tagihan ${t.no} (${fd(t.date)}) masih tersisa ${rp(s)}. ${ST.howto} Jika sudah membayar, mohon abaikan pesan ini. Terima kasih 🙏`;
+  window.open('https://wa.me/'+waNum(c&&c.wa)+'?text='+encodeURIComponent(m))}
+function vMore(){$('#c').innerHTML=`<h2>Lainnya</h2>`+[['pelanggan','👥','Pelanggan'],['resep','🧮','Resep & HPP'],['stok','📦','Stok masuk/keluar & riwayat'],['set','⚙️','Pengaturan, PIN & backup']].map(([k,i,l])=>`<button class="card" style="width:100%;text-align:left;font-size:17px" onclick="go('${k}')">${i} ${l}</button>`).join('')}
+function vHome(){
+  const A=T.filter(t=>!t.void),now=new Date(),ym=d=>{d=new Date(d);return d.getFullYear()*12+d.getMonth()},sum=(l,f)=>l.reduce((a,t)=>a+f(t),0),
+  td=A.filter(t=>new Date(t.date).toDateString()===now.toDateString()),mo=A.filter(t=>ym(t.date)===ym(now)),gp=t=>t.items.reduce((a,i)=>a+(i.price-i.cost)*i.qty,0)-t.discount,cnt={};
+  mo.forEach(t=>t.items.forEach(i=>cnt[i.name]=(cnt[i.name]||0)+i.qty));
+  const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,5),low=P.filter(p=>p.active&&p.track&&p.stock<=5),box=(l,v,c)=>`<div class="card f1"><div class="mut">${l}</div><b style="font-size:18px;${c?'color:'+c:''}">${v}</b></div>`;
+  $('#c').innerHTML=`<h2>Beranda</h2><div class="row">${box('Omzet hari ini',rp(sum(td,t=>t.total)))}${box('Omzet bulan ini',rp(sum(mo,t=>t.total)))}</div><div class="row">${box('Laba kotor bulan ini',rp(sum(mo,gp)),'#059669')}${box('Piutang',rp(sum(A,t=>Math.max(0,t.total-paid(t)))),'#DC2626')}</div><div class="row">${box('Transaksi hari ini',td.length)}${box('Transaksi bulan ini',mo.length)}</div>
+  <div class="card"><b>Produk terlaris bulan ini</b>${top.length?top.map(([n,q],i)=>`<div class="line row sp"><span>${i+1}. ${esc(n)}</span><b>${q}</b></div>`).join(''):'<p class="mut">Belum ada penjualan bulan ini.</p>'}</div>
+  ${low.length?`<div class="card"><b>⚠️ Stok menipis</b>${low.map(p=>`<div class="line row sp"><span>${esc(p.name)}</span><b>${p.stock} ${esc(p.unit)}</b></div>`).join('')}</div>`:''}<button style="width:100%" onclick="exportCSV()">Ekspor transaksi (CSV)</button>`}
+async function exportCSV(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"',rows=[['No','Tanggal','Pelanggan','Produk','Qty','Harga','Subtotal','Status','Dibayar']];
+  T.filter(t=>!t.void).forEach(t=>{const c=C.find(x=>x.id===t.customer_id);t.items.forEach(i=>rows.push([t.no,fd(t.date),c?c.name:'Umum',i.name,i.qty,i.price,i.qty*i.price,status(t),paid(t)]))});
+  const f=new File(['\ufeff'+rows.map(r=>r.map(q).join(',')).join('\n')],'transaksi-nyemiljajan.csv',{type:'text/csv'});
+  try{if(navigator.canShare&&navigator.canShare({files:[f]}))await navigator.share({files:[f]});else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;a.click()}}catch(e){}}
+function vStok(){const tp=P.filter(p=>p.track&&p.active);
+  $('#c').innerHTML=`<h2>Stok</h2><div class="card"><select id="sp">${tp.map(p=>`<option value="${p.id}">${esc(p.name)} (stok ${p.stock})</option>`).join('')}</select><select id="st"><option value="in">Stok masuk (+)</option><option value="out">Stok keluar (−)</option><option value="adj">Penyesuaian (set jumlah)</option></select><input id="sq" type="number" inputmode="decimal" placeholder="Jumlah"><input id="sn" placeholder="Catatan (opsional)"><button class="pri" style="width:100%" onclick="stokApply()">Simpan</button></div><div class="card"><b>Riwayat stok</b>`+[...M].sort((a,b)=>b.date<a.date?-1:1).slice(0,40).map(m=>{const p=P.find(x=>x.id===m.product_id);return `<div class="line row sp"><span>${esc(p?p.name:'?')}<div class="mut">${fd(m.date)} · ${esc(m.note||'')}</div></span><b>${m.qty>0?'+':''}${m.qty}</b></div>`}).join('')+`</div>`}
+async function stokApply(){const p=P.find(x=>x.id===$('#sp').value),ty=$('#st').value,q=parseFloat($('#sq').value);if(!p||!(q>=0)||(ty!=='adj'&&!(q>0)))return toast('Isi jumlah dengan benar');
+  const d=ty==='in'?q:ty==='out'?-q:q-p.stock;if(p.stock+d<0)return toast('Stok tidak boleh minus');if(!d)return toast('Tidak ada perubahan');
+  p.stock+=d;p.updated_at=Date.now();await save([['products',p],mv(p.id,d,$('#sn').value.trim()||{in:'Stok masuk',out:'Stok keluar',adj:'Penyesuaian'}[ty])]);toast('Stok diperbarui');vStok()}
+let RS={id:'',name:'',yield:10,pack:0,margin:40,rows:[{n:'',p:0,q:1,u:0}]};
+function rcalc(){const b=RS.rows.reduce((a,r)=>a+(r.q>0?r.p/r.q*r.u:0),0),hpp=b/(RS.yield>0?RS.yield:1)+(+RS.pack||0),rc=Math.ceil(hpp*(1+(+RS.margin||0)/100)/500)*500;return{b,hpp,rc,laba:rc-hpp}}
+function rshow(){const r=rcalc();$('#rr').innerHTML=`<div class="row sp"><span>Total bahan</span><b>${rp(r.b)}</b></div><div class="row sp"><span>HPP per pcs</span><b>${rp(r.hpp)}</b></div><div class="row sp"><span>Harga jual rekomendasi</span><b style="color:var(--prd)">${rp(r.rc)}</b></div><div class="row sp"><span>Laba per pcs</span><b>${rp(r.laba)}</b></div>`}
+function rs(i,k,v){RS.rows[i][k]=v;rshow()}
+function loadR(id){const r=RC.find(x=>x.id===id);if(r){RS=JSON.parse(JSON.stringify(r));vResep()}}
+function vResep(){const rows=RS.rows.map((r,i)=>`<div class="card"><input placeholder="Nama bahan" value="${esc(r.n)}" oninput="rs(${i},'n',this.value)"><div class="row"><input type="number" inputmode="decimal" placeholder="Harga beli Rp" value="${r.p||''}" oninput="rs(${i},'p',+this.value)"><input type="number" inputmode="decimal" placeholder="Isi beli (g/ml/pcs)" value="${r.q||''}" oninput="rs(${i},'q',+this.value)"></div><div class="row"><input type="number" inputmode="decimal" placeholder="Jumlah dipakai" value="${r.u||''}" oninput="rs(${i},'u',+this.value)"><button class="dng" onclick="RS.rows.splice(${i},1);vResep()">✕</button></div></div>`).join('');
+  $('#c').innerHTML=`<h2>Resep & HPP</h2>`+(RC.length?`<select onchange="loadR(this.value)"><option value="">Muat resep tersimpan…</option>${RC.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select>`:'')+`<input placeholder="Nama resep / produk" value="${esc(RS.name)}" oninput="RS.name=this.value">${rows}<button style="width:100%;margin-bottom:8px" onclick="RS.rows.push({n:'',p:0,q:1,u:0});vResep()">+ Tambah bahan</button><div class="row"><input type="number" inputmode="decimal" placeholder="Hasil (pcs)" value="${RS.yield}" oninput="RS.yield=+this.value;rshow()"><input type="number" inputmode="numeric" placeholder="Kemasan/pcs Rp" value="${RS.pack||''}" oninput="RS.pack=+this.value;rshow()"><input type="number" inputmode="numeric" placeholder="Margin %" value="${RS.margin}" oninput="RS.margin=+this.value;rshow()"></div><div class="card" id="rr"></div><div class="row"><button class="f1" onclick="saveR()">Simpan resep</button><button class="pri f1" onclick="toProd()">Jadikan produk</button></div>`;rshow()}
+async function saveR(){if(!RS.name.trim())return toast('Isi nama resep');let r=RC.find(x=>x.id===RS.id);if(!r){r=rec({});RC.push(r);RS.id=r.id}Object.assign(r,JSON.parse(JSON.stringify(RS)),{id:r.id,updated_at:Date.now()});await save([['recipes',r]]);toast('Resep tersimpan');vResep()}
+async function toProd(){const n=RS.name.trim(),r=rcalc();if(!n||!(RS.yield>0))return toast('Isi nama dan hasil produksi');if(!confirm('Buat produk "'+n+'" dengan HPP '+rp(r.hpp)+', harga '+rp(r.rc)+', stok awal '+RS.yield+'?'))return;
+  const p=rec({sku:'',name:n,category:'Frozen Food',cost:Math.round(r.hpp),price:r.rc,stock:RS.yield,unit:'pcs',track:true,active:true});P.push(p);await save([['products',p],mv(p.id,RS.yield,'Hasil produksi')]);toast('Produk dibuat, ubah kategori/harga di menu Produk')}
 
 init();
 </script>
